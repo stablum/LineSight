@@ -111,10 +111,8 @@ function formatLineCount(count: number): string {
     return `${Math.floor(count / 1000000)}M`; // e.g., "1M"
   } else if (count >= 1000) {
     return `${Math.floor(count / 1000)}K`; // e.g., "1K"
-  } else if (count >= 100) {
-    return `${Math.floor(count / 100)}H`; // e.g., "1H" for hundreds
   } else {
-    return count.toString(); // exact count for <100
+    return count.toString(); // exact count for <1000
   }
 }
 

@@ -2,7 +2,7 @@
   "name": "linesight",
   "displayName": "LineSight",
   "description": "Shows line counts next to files in the explorer",
-  "version": "0.0.5",
+  "version": "0.0.5-stablum000",
   "engines": {
     "vscode": "^1.80.0"
   },
