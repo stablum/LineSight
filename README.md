@@ -23,8 +23,9 @@ Hope you find it useful :)
 - **Line Count Badges**: Shows the number of lines next to each file in the explorer
 - **Auto-Updates**: Line counts automatically update when files are edited
 - **Refresh Button**: Provides a refresh button in the explorer title bar to manually update counts
-- **Abbreviated Display**: Shows abbreviated counts (like "2K" for 2000+ lines) as badges
+- **Abbreviated Display**: Shows compact counts (like "2K", "+K", and "HK") as badges
 - **Exact Counts in Tooltips**: Hover over a badge to see the exact line count
+- **Customizable Badge Colors**: Supports theme color overrides for each line-count range
 - **Skip Large Directories**: Ignores directories like node_modules and .git for better performance
 - **Optimized Performance**: Minimal background overhead with smart caching and throttling
 
@@ -55,7 +56,33 @@ Once installed, LineSight will automatically display line counts next to your fi
 
 ## Extension Settings
 
-This extension has no configurable settings at this time.
+LineSight badge colors can be customized with VS Code theme color overrides in `settings.json`:
+
+```json
+{
+  "workbench.colorCustomizations": {
+    "linesight.count.zero": "#808080",
+    "linesight.count.ones": "#6A9955",
+    "linesight.count.tens": "#4EC9B0",
+    "linesight.count.hundreds": "#DCDCAA",
+    "linesight.count.thousands": "#CE9178",
+    "linesight.count.tenThousands": "#F48771",
+    "linesight.count.hundredThousands": "#C586C0",
+    "linesight.count.millions": "#F44747"
+  }
+}
+```
+
+Badge ranges:
+
+- `0`: `0`
+- `1` to `9`: raw count
+- `10` to `99`: raw count
+- `100` to `999`: `1H` to `9H`
+- `1,000` to `9,999`: `1K` to `9K`
+- `10,000` to `99,999`: `+K`
+- `100,000` to `999,999`: `HK`
+- `1,000,000+`: `1M`, `2M`, and higher
 
 ## License
 

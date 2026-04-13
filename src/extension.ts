@@ -109,6 +109,10 @@ async function countLinesWithReadStream(filePath: string): Promise<number> {
 function formatLineCount(count: number): string {
   if (count >= 1000000) {
     return `${Math.floor(count / 1000000)}M`; // e.g., "1M"
+  } else if (count >= 100000) {
+    return 'HK';
+  } else if (count >= 10000) {
+    return '+K';
   } else if (count >= 1000) {
     return `${Math.floor(count / 1000)}K`; // e.g., "1K"
   } else if (count >= 100) {
@@ -116,6 +120,36 @@ function formatLineCount(count: number): string {
   } else {
     return count.toString(); // exact count for <100
   }
+}
+
+function getLineCountColor(count: number): vscode.ThemeColor {
+  if (count >= 1000000) {
+    return new vscode.ThemeColor('linesight.count.millions');
+  } else if (count >= 100000) {
+    return new vscode.ThemeColor('linesight.count.hundredThousands');
+  } else if (count >= 10000) {
+    return new vscode.ThemeColor('linesight.count.tenThousands');
+  } else if (count >= 1000) {
+    return new vscode.ThemeColor('linesight.count.thousands');
+  } else if (count >= 100) {
+    return new vscode.ThemeColor('linesight.count.hundreds');
+  } else if (count >= 10) {
+    return new vscode.ThemeColor('linesight.count.tens');
+  } else if (count > 0) {
+    return new vscode.ThemeColor('linesight.count.ones');
+  }
+
+  return new vscode.ThemeColor('linesight.count.zero');
+}
+
+function createLineCountDecoration(lineCount: number, estimated = false): vscode.FileDecoration {
+  const formattedCount = formatLineCount(lineCount);
+  const tooltip = estimated ? `~${lineCount} lines (estimated)` : `${lineCount} lines`;
+  return new vscode.FileDecoration(
+    formattedCount,
+    tooltip,
+    getLineCountColor(lineCount),
+  );
 }
 
 // Skip directories that should be ignored
@@ -302,7 +336,7 @@ class LineCountDecorationProvider implements vscode.FileDecorationProvider {
 
         // For empty files, return 0 immediately
         if (stat.size === 0) {
-          const zeroDecoration = new vscode.FileDecoration('0', '0 lines');
+          const zeroDecoration = createLineCountDecoration(0);
           fileDecorations.set(filePath, zeroDecoration);
           return zeroDecoration;
         }
@@ -313,11 +347,7 @@ class LineCountDecorationProvider implements vscode.FileDecorationProvider {
         
         if (cachedSize === stat.size && lineCount !== undefined) {
           // Use cached value if file size hasn't changed
-          const formattedCount = formatLineCount(lineCount);
-          const decoration = new vscode.FileDecoration(
-            formattedCount, 
-            `${lineCount} lines`,
-          );
+          const decoration = createLineCountDecoration(lineCount);
           return decoration;
         }
         
@@ -328,11 +358,7 @@ class LineCountDecorationProvider implements vscode.FileDecorationProvider {
         if (stat.size > DEFAULT_CONFIG.sizeLimit) {
           lineCount = Math.floor(stat.size / DEFAULT_CONFIG.estimationFactor);
           lineCountCache.set(filePath, lineCount);
-          const formattedCount = formatLineCount(lineCount);
-          const decoration = new vscode.FileDecoration(
-            formattedCount, 
-            `~${lineCount} lines (estimated)`,
-          );
+          const decoration = createLineCountDecoration(lineCount, true);
           fileDecorations.set(filePath, decoration);
           return decoration;
         }
@@ -368,13 +394,7 @@ class LineCountDecorationProvider implements vscode.FileDecorationProvider {
         
         // Only create decoration if we have a positive line count
         if (lineCount > 0) {
-          const formattedCount = formatLineCount(lineCount);
-          
-          // Create the decoration with the formatted count
-          const decoration = new vscode.FileDecoration(
-            formattedCount, 
-            `${lineCount} lines`,
-          );
+          const decoration = createLineCountDecoration(lineCount);
           
           // Store decoration for later reference
           fileDecorations.set(filePath, decoration);
