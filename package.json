@@ -2,7 +2,7 @@
   "name": "linesight",
   "displayName": "LineSight",
   "description": "Shows line counts next to files in the explorer",
-  "version": "0.0.5-stablum003",
+  "version": "0.0.5-stablum004",
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -98,6 +98,14 @@
         "command": "linesight.refresh",
         "title": "Refresh Line Counts",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "linesight.installWorkbenchPatch",
+        "title": "LineSight: Install Badge-Only Color Patch"
+      },
+      {
+        "command": "linesight.removeWorkbenchPatch",
+        "title": "LineSight: Remove Badge-Only Color Patch"
       }
     ],
     "menus": {

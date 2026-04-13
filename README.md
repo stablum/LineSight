@@ -26,6 +26,7 @@ Hope you find it useful :)
 - **Abbreviated Display**: Shows compact counts (like "2K", "+K", and "HK") as badges
 - **Exact Counts in Tooltips**: Hover over a badge to see the exact line count
 - **Customizable Badge Colors**: Supports theme color overrides for each line-count range
+- **Badge-Only Color Patch**: Provides an opt-in unsupported patch for coloring only LineSight badges
 - **Skip Large Directories**: Ignores directories like node_modules and .git for better performance
 - **Optimized Performance**: Minimal background overhead with smart caching and throttling
 
@@ -83,6 +84,30 @@ Badge ranges:
 - `10,000` to `99,999`: `+K`
 - `100,000` to `999,999`: `HK`
 - `1,000,000+`: `1M`, `2M`, and higher
+
+## Unsupported Badge-Only Color Patch
+
+VS Code's supported file decoration API applies decoration colors to the file label area, not only to the badge. LineSight includes an explicit opt-in patch for personal desktop use that changes VS Code's generated decoration CSS so `linesight.count.*` colors apply to LineSight badges while the filename keeps its normal Explorer color.
+
+Run the command from the Command Palette:
+
+```text
+LineSight: Install Badge-Only Color Patch
+```
+
+Then reload the VS Code window when prompted. To undo the patch, run:
+
+```text
+LineSight: Remove Badge-Only Color Patch
+```
+
+Important notes:
+
+- This is unsupported by VS Code and may break when VS Code changes its internal workbench bundle.
+- The command patches local desktop VS Code workbench JavaScript files and creates `.linesight-backup` files next to patched files before writing.
+- The command refuses web and remote extension hosts.
+- VS Code or Scoop updates may replace the patched workbench files, so the install command may need to be run again after updates.
+- Installing the VSIX with `code --install-extension` only installs the extension. The badge-only workbench patch is a separate explicit command.
 
 ## License
 

@@ -152,6 +152,351 @@ function createLineCountDecoration(lineCount: number, estimated = false): vscode
   );
 }
 
+const WORKBENCH_PATCH_START = '/* LineSight badge-only decoration patch start */';
+const WORKBENCH_PATCH_END = '/* LineSight badge-only decoration patch end */';
+const WORKBENCH_PATCH_HELPER = `${WORKBENCH_PATCH_START}function linesightShouldKeepItemColor(i){return !/^linesight\\.count\\./.test(String(i))}${WORKBENCH_PATCH_END}`;
+const WORKBENCH_DECORATION_CLASS_ANCHOR = 'var _Vt=class';
+const WORKBENCH_ORIGINAL_COLOR_RULE = 'eg(`.${this.itemColorClassName}`,`color: ${pme(t)};`,e)';
+const WORKBENCH_PATCHED_COLOR_RULE = `linesightShouldKeepItemColor(t)&&${WORKBENCH_ORIGINAL_COLOR_RULE}`;
+const WORKBENCH_BACKUP_SUFFIX = '.linesight-backup';
+
+type WorkbenchPatchStatus =
+  | 'patched'
+  | 'already-patched'
+  | 'removed'
+  | 'not-patched'
+  | 'unsupported'
+  | 'failed';
+
+interface WorkbenchPatchResult {
+  filePath: string;
+  status: WorkbenchPatchStatus;
+  detail?: string;
+}
+
+function replaceAllWithCount(
+  value: string,
+  searchValue: string,
+  replaceValue: string
+): { value: string; count: number } {
+  const parts = value.split(searchValue);
+  return {
+    value: parts.join(replaceValue),
+    count: parts.length - 1,
+  };
+}
+
+function installColorRulePatch(content: string): { value: string; count: number } {
+  const protectedPatchToken = '__LINESIGHT_PROTECTED_PATCHED_COLOR_RULE__';
+  const protectedContent = content.split(WORKBENCH_PATCHED_COLOR_RULE).join(protectedPatchToken);
+  const replacement = replaceAllWithCount(
+    protectedContent,
+    WORKBENCH_ORIGINAL_COLOR_RULE,
+    WORKBENCH_PATCHED_COLOR_RULE
+  );
+
+  return {
+    value: replacement.value.split(protectedPatchToken).join(WORKBENCH_PATCHED_COLOR_RULE),
+    count: replacement.count,
+  };
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.promises.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function directoryExists(directoryPath: string): Promise<boolean> {
+  try {
+    const stats = await fs.promises.stat(directoryPath);
+    return stats.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function getProcessResourcesPath(): string | undefined {
+  const processWithResources = process as NodeJS.Process & { resourcesPath?: string };
+  return typeof processWithResources.resourcesPath === 'string'
+    ? processWithResources.resourcesPath
+    : undefined;
+}
+
+async function findWorkbenchDirectories(): Promise<string[]> {
+  const resourcesPaths = new Set<string>();
+  const resourcesPath = getProcessResourcesPath();
+
+  if (resourcesPath) {
+    resourcesPaths.add(resourcesPath);
+  }
+
+  const executableDirectory = path.dirname(process.execPath);
+  resourcesPaths.add(path.join(executableDirectory, 'resources'));
+
+  try {
+    const entries = await fs.promises.readdir(executableDirectory, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        resourcesPaths.add(path.join(executableDirectory, entry.name, 'resources'));
+      }
+    }
+  } catch (error) {
+    console.error('LineSight could not inspect VS Code executable directory:', error);
+  }
+
+  const workbenchDirectories = new Set<string>();
+  for (const candidateResourcesPath of resourcesPaths) {
+    const workbenchDirectory = path.join(candidateResourcesPath, 'app', 'out', 'vs', 'workbench');
+    if (await directoryExists(workbenchDirectory)) {
+      workbenchDirectories.add(workbenchDirectory);
+    }
+  }
+
+  return [...workbenchDirectories];
+}
+
+async function findWorkbenchPatchTargets(): Promise<string[]> {
+  const workbenchDirectories = await findWorkbenchDirectories();
+  const targetFileNames = [
+    'workbench.desktop.main.js',
+    'workbench.desktop.main.custom-ui-style.js',
+  ];
+  const targets = new Set<string>();
+
+  for (const workbenchDirectory of workbenchDirectories) {
+    for (const targetFileName of targetFileNames) {
+      const targetPath = path.join(workbenchDirectory, targetFileName);
+      if (await pathExists(targetPath)) {
+        targets.add(targetPath);
+      }
+    }
+  }
+
+  return [...targets];
+}
+
+function getWorkbenchPatchBlocker(): string | undefined {
+  if (vscode.env.uiKind !== vscode.UIKind.Desktop) {
+    return 'LineSight can only patch the desktop VS Code workbench.';
+  }
+
+  if (vscode.env.remoteName) {
+    return 'LineSight workbench patching must run from a local desktop extension host, not a remote workspace.';
+  }
+
+  return undefined;
+}
+
+async function createWorkbenchBackup(filePath: string): Promise<void> {
+  const backupPath = `${filePath}${WORKBENCH_BACKUP_SUFFIX}`;
+  if (!(await pathExists(backupPath))) {
+    await fs.promises.copyFile(filePath, backupPath);
+  }
+}
+
+async function installWorkbenchPatchInFile(filePath: string): Promise<WorkbenchPatchResult> {
+  try {
+    const content = await fs.promises.readFile(filePath, 'utf8');
+    let patchedContent = content;
+    let changed = false;
+
+    if (!patchedContent.includes(WORKBENCH_PATCH_START)) {
+      if (!patchedContent.includes(WORKBENCH_DECORATION_CLASS_ANCHOR)) {
+        return {
+          filePath,
+          status: 'unsupported',
+          detail: 'Could not find VS Code decoration class anchor.',
+        };
+      }
+
+      patchedContent = patchedContent.replace(
+        WORKBENCH_DECORATION_CLASS_ANCHOR,
+        `${WORKBENCH_PATCH_HELPER}${WORKBENCH_DECORATION_CLASS_ANCHOR}`
+      );
+      changed = true;
+    }
+
+    const colorRuleReplacement = installColorRulePatch(patchedContent);
+
+    if (colorRuleReplacement.count > 0) {
+      patchedContent = colorRuleReplacement.value;
+      changed = true;
+    }
+
+    if (!changed) {
+      if (patchedContent.includes(WORKBENCH_PATCHED_COLOR_RULE)) {
+        return {
+          filePath,
+          status: 'already-patched',
+        };
+      }
+
+      return {
+        filePath,
+        status: 'unsupported',
+        detail: 'Could not find VS Code decoration color rule.',
+      };
+    }
+
+    await createWorkbenchBackup(filePath);
+    await fs.promises.writeFile(filePath, patchedContent, 'utf8');
+
+    return {
+      filePath,
+      status: 'patched',
+      detail: `Updated ${colorRuleReplacement.count} decoration color rule(s).`,
+    };
+  } catch (error) {
+    return {
+      filePath,
+      status: 'failed',
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function removeWorkbenchPatchInFile(filePath: string): Promise<WorkbenchPatchResult> {
+  try {
+    const content = await fs.promises.readFile(filePath, 'utf8');
+    let patchedContent = content.replace(WORKBENCH_PATCH_HELPER, '');
+    let changed = patchedContent !== content;
+
+    const colorRuleRevert = replaceAllWithCount(
+      patchedContent,
+      WORKBENCH_PATCHED_COLOR_RULE,
+      WORKBENCH_ORIGINAL_COLOR_RULE
+    );
+
+    if (colorRuleRevert.count > 0) {
+      patchedContent = colorRuleRevert.value;
+      changed = true;
+    }
+
+    if (!changed) {
+      return {
+        filePath,
+        status: 'not-patched',
+      };
+    }
+
+    await fs.promises.writeFile(filePath, patchedContent, 'utf8');
+
+    return {
+      filePath,
+      status: 'removed',
+      detail: `Restored ${colorRuleRevert.count} decoration color rule(s).`,
+    };
+  } catch (error) {
+    return {
+      filePath,
+      status: 'failed',
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function runWorkbenchPatch(
+  patchFile: (filePath: string) => Promise<WorkbenchPatchResult>
+): Promise<WorkbenchPatchResult[]> {
+  const targets = await findWorkbenchPatchTargets();
+  if (targets.length === 0) {
+    throw new Error('LineSight could not find VS Code desktop workbench files to patch.');
+  }
+
+  return Promise.all(targets.map(patchFile));
+}
+
+async function showWorkbenchPatchResults(
+  action: 'install' | 'remove',
+  results: WorkbenchPatchResult[]
+): Promise<void> {
+  const changedResults = results.filter(result => result.status === 'patched' || result.status === 'removed');
+  const failedResults = results.filter(result => result.status === 'failed' || result.status === 'unsupported');
+  const unchangedResults = results.filter(result => result.status === 'already-patched' || result.status === 'not-patched');
+
+  for (const result of results) {
+    console.log(`LineSight workbench patch ${result.status}: ${result.filePath}`, result.detail ?? '');
+  }
+
+  if (failedResults.length > 0) {
+    await vscode.window.showWarningMessage(
+      `LineSight ${action} patch finished with ${failedResults.length} issue(s). Check the Developer Tools console for file details.`
+    );
+    return;
+  }
+
+  if (changedResults.length === 0) {
+    const message = action === 'install'
+      ? `LineSight workbench patch is already installed in ${unchangedResults.length} file(s).`
+      : `LineSight workbench patch was not installed in ${unchangedResults.length} file(s).`;
+    await vscode.window.showInformationMessage(message);
+    return;
+  }
+
+  const message = action === 'install'
+    ? `LineSight workbench patch installed in ${changedResults.length} file(s). Reload VS Code to use badge-only colors.`
+    : `LineSight workbench patch removed from ${changedResults.length} file(s). Reload VS Code to restore default decoration colors.`;
+  const reload = await vscode.window.showInformationMessage(message, 'Reload Window');
+
+  if (reload === 'Reload Window') {
+    await vscode.commands.executeCommand('workbench.action.reloadWindow');
+  }
+}
+
+async function installWorkbenchPatchCommand(): Promise<void> {
+  const blocker = getWorkbenchPatchBlocker();
+  if (blocker) {
+    await vscode.window.showErrorMessage(blocker);
+    return;
+  }
+
+  const confirmation = await vscode.window.showWarningMessage(
+    'LineSight will apply an unsupported patch to VS Code workbench JavaScript so LineSight colors affect only line-count badges. Backups are created before writing, and the patch may need to be reinstalled after VS Code updates.',
+    { modal: true },
+    'Install Patch'
+  );
+
+  if (confirmation !== 'Install Patch') {
+    return;
+  }
+
+  try {
+    const results = await runWorkbenchPatch(installWorkbenchPatchInFile);
+    await showWorkbenchPatchResults('install', results);
+  } catch (error) {
+    await vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function removeWorkbenchPatchCommand(): Promise<void> {
+  const blocker = getWorkbenchPatchBlocker();
+  if (blocker) {
+    await vscode.window.showErrorMessage(blocker);
+    return;
+  }
+
+  const confirmation = await vscode.window.showWarningMessage(
+    'LineSight will remove its unsupported VS Code workbench patch and restore the default file-decoration color behavior.',
+    { modal: true },
+    'Remove Patch'
+  );
+
+  if (confirmation !== 'Remove Patch') {
+    return;
+  }
+
+  try {
+    const results = await runWorkbenchPatch(removeWorkbenchPatchInFile);
+    await showWorkbenchPatchResults('remove', results);
+  } catch (error) {
+    await vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+  }
+}
+
 // Skip directories that should be ignored
 function shouldSkipPath(filePath: string): boolean {
   // Skip directories that are commonly large or not relevant
@@ -601,6 +946,10 @@ export function activate(context: vscode.ExtensionContext) {
   });
   
   context.subscriptions.push(refreshCommand);
+  context.subscriptions.push(
+    vscode.commands.registerCommand('linesight.installWorkbenchPatch', installWorkbenchPatchCommand),
+    vscode.commands.registerCommand('linesight.removeWorkbenchPatch', removeWorkbenchPatchCommand)
+  );
   
   // Watch for workspace folder changes
   context.subscriptions.push(
